@@ -1,0 +1,218 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Chatroom</title>
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg: #f4f5f7;
+    --panel: #ffffff;
+    --text: #1a1a1a;
+    --muted: #6b7280;
+    --accent: #4f46e5;
+    --bubble-me: #4f46e5;
+    --bubble-other: #e5e7eb;
+    --border: #e5e7eb;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0f1115;
+      --panel: #171a21;
+      --text: #e6e6e6;
+      --muted: #9aa0aa;
+      --accent: #6366f1;
+      --bubble-me: #6366f1;
+      --bubble-other: #262a33;
+      --border: #2a2e37;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, "Segoe UI", Roboto, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  #app {
+    width: 100%;
+    max-width: 480px;
+    height: 100vh;
+    max-height: 720px;
+    background: var(--panel);
+    display: flex;
+    flex-direction: column;
+    border-radius: 12px;
+    overflow: hidden;
+    box-shadow: 0 4px 24px rgba(0,0,0,0.12);
+  }
+  header {
+    padding: 16px;
+    border-bottom: 1px solid var(--border);
+    font-weight: 600;
+  }
+  #messages {
+    flex: 1;
+    overflow-y: auto;
+    padding: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .msg { display: flex; flex-direction: column; max-width: 75%; }
+  .msg.me { align-self: flex-end; align-items: flex-end; }
+  .msg .bubble {
+    padding: 8px 12px;
+    border-radius: 14px;
+    background: var(--bubble-other);
+    word-break: break-word;
+  }
+  .msg.me .bubble { background: var(--bubble-me); color: white; }
+  .msg .meta { font-size: 11px; color: var(--muted); margin: 2px 6px; }
+  .system {
+    text-align: center;
+    font-size: 12px;
+    color: var(--muted);
+    margin: 4px 0;
+  }
+  #login, #chat-ui { display: flex; flex-direction: column; height: 100%; }
+  #login { align-items: center; justify-content: center; gap: 12px; padding: 24px; }
+  #login input {
+    width: 100%;
+    padding: 10px 12px;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    background: transparent;
+    color: var(--text);
+  }
+  #login button, #composer button {
+    background: var(--accent);
+    color: white;
+    border: none;
+    padding: 10px 16px;
+    border-radius: 8px;
+    cursor: pointer;
+  }
+  #composer {
+    display: flex;
+    gap: 8px;
+    padding: 12px;
+    border-top: 1px solid var(--border);
+  }
+  #composer input {
+    flex: 1;
+    padding: 10px 12px;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    background: transparent;
+    color: var(--text);
+  }
+  .hidden { display: none !important; }
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="login">
+    <h2>Chatroom 입장</h2>
+    <input id="username-input" placeholder="닉네임을 입력하세요" maxlength="30" />
+    <button id="join-btn">입장하기</button>
+  </div>
+
+  <div id="chat-ui" class="hidden">
+    <header>Chatroom</header>
+    <div id="messages"></div>
+    <form id="composer">
+      <input id="message-input" placeholder="메시지를 입력하세요" autocomplete="off" maxlength="500" />
+      <button type="submit">전송</button>
+    </form>
+  </div>
+</div>
+
+<script src="/socket.io/socket.io.js"></script>
+<script>
+  const socket = io();
+  let username = "";
+
+  const loginEl = document.getElementById("login");
+  const chatUiEl = document.getElementById("chat-ui");
+  const usernameInput = document.getElementById("username-input");
+  const joinBtn = document.getElementById("join-btn");
+  const messagesEl = document.getElementById("messages");
+  const composer = document.getElementById("composer");
+  const messageInput = document.getElementById("message-input");
+
+  function scrollToBottom() {
+    messagesEl.scrollTop = messagesEl.scrollHeight;
+  }
+
+  function renderMessage({ username: sender, content, created_at }) {
+    const wrapper = document.createElement("div");
+    wrapper.className = "msg" + (sender === username ? " me" : "");
+
+    const bubble = document.createElement("div");
+    bubble.className = "bubble";
+    bubble.textContent = content;
+
+    const meta = document.createElement("div");
+    meta.className = "meta";
+    const time = created_at ? new Date(created_at).toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit" }) : "";
+    meta.textContent = `${sender} · ${time}`;
+
+    wrapper.appendChild(bubble);
+    wrapper.appendChild(meta);
+    messagesEl.appendChild(wrapper);
+    scrollToBottom();
+  }
+
+  function renderSystem(text) {
+    const el = document.createElement("div");
+    el.className = "system";
+    el.textContent = text;
+    messagesEl.appendChild(el);
+    scrollToBottom();
+  }
+
+  async function loadHistory() {
+    try {
+      const res = await fetch("/api/messages");
+      const data = await res.json();
+      data.forEach(renderMessage);
+    } catch (err) {
+      console.error("Failed to load history", err);
+    }
+  }
+
+  async function enterChat() {
+    const name = usernameInput.value.trim();
+    if (!name) return;
+    username = name;
+    loginEl.classList.add("hidden");
+    chatUiEl.classList.remove("hidden");
+    socket.emit("join", username);
+    await loadHistory();
+    messageInput.focus();
+  }
+
+  joinBtn.addEventListener("click", enterChat);
+  usernameInput.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") enterChat();
+  });
+
+  composer.addEventListener("submit", (e) => {
+    e.preventDefault();
+    const content = messageInput.value.trim();
+    if (!content) return;
+    socket.emit("chat message", content);
+    messageInput.value = "";
+  });
+
+  socket.on("chat message", renderMessage);
+  socket.on("system message", renderSystem);
+</script>
+</body>
+</html>

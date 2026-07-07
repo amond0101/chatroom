@@ -139,11 +139,42 @@ app.post("/api/auth/signup", async (req, res) => {
 
   if (data.user && !data.session) {
     return res.json({
-      message: "가입 확인 메일을 보냈습니다. 이메일을 확인한 뒤 로그인해주세요.",
+      needsVerification: true,
+      message: "이메일로 인증번호를 보냈습니다.",
     });
   }
 
   res.json({ message: "가입이 완료됐습니다." });
+});
+
+app.post("/api/auth/verify-signup", async (req, res) => {
+  const { email, token } = req.body || {};
+  if (!email || !token) {
+    return res.status(400).json({ error: "이메일과 인증번호를 입력해주세요." });
+  }
+
+  const { data, error } = await authClient.auth.verifyOtp({
+    email,
+    token: token.trim(),
+    type: "signup",
+  });
+
+  if (error) {
+    return res.status(400).json({ error: "인증번호가 올바르지 않거나 만료되었습니다." });
+  }
+
+  setSessionCookies(req, res, data.session);
+  res.json(toUserInfo(data.user, data.session.access_token));
+});
+
+app.post("/api/auth/resend-code", async (req, res) => {
+  const { email } = req.body || {};
+  if (!email) return res.status(400).json({ error: "이메일을 입력해주세요." });
+
+  const { error } = await authClient.auth.resend({ type: "signup", email });
+  if (error) return res.status(400).json({ error: error.message });
+
+  res.json({ message: "인증번호를 다시 보냈습니다." });
 });
 
 app.post("/api/auth/login", async (req, res) => {

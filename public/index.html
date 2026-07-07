@@ -153,6 +153,19 @@
   }
   .auth-message.error { color: var(--negative); }
   .auth-message.success { color: var(--accent); }
+  .verify-desc {
+    font-size: 13px;
+    color: var(--text-muted);
+    text-align: center;
+    max-width: 280px;
+    margin: 0 0 4px;
+  }
+  #verify-code {
+    text-align: center;
+    letter-spacing: 6px;
+    font-size: 20px;
+    font-weight: 700;
+  }
   #logout-btn {
     background: var(--surface-2);
     color: var(--text-muted);
@@ -637,6 +650,14 @@
       <button type="submit" class="btn-pill">회원가입</button>
       <div class="auth-message" id="signup-message"></div>
     </form>
+
+    <form id="verify-form" class="auth-form hidden">
+      <p class="verify-desc" id="verify-desc"></p>
+      <input id="verify-code" placeholder="인증번호" maxlength="12" inputmode="numeric" autocomplete="one-time-code" />
+      <button type="submit" class="btn-pill">확인</button>
+      <div class="auth-message" id="verify-message"></div>
+      <button type="button" id="resend-code-btn" class="btn-text">인증번호 다시 보내기</button>
+    </form>
   </div>
 
   <div id="chat-ui">
@@ -710,6 +731,13 @@
   const signupPasswordInput = document.getElementById("signup-password");
   const signupPasswordConfirmInput = document.getElementById("signup-password-confirm");
   const signupMessageEl = document.getElementById("signup-message");
+  const authTabsEl = document.getElementById("auth-tabs");
+  const verifyForm = document.getElementById("verify-form");
+  const verifyDescEl = document.getElementById("verify-desc");
+  const verifyCodeInput = document.getElementById("verify-code");
+  const verifyMessageEl = document.getElementById("verify-message");
+  const resendCodeBtn = document.getElementById("resend-code-btn");
+  let pendingVerifyEmail = "";
   const logoutBtn = document.getElementById("logout-btn");
   const roomListEl = document.getElementById("room-list");
   const createRoomBtn = document.getElementById("create-room-btn");
@@ -985,9 +1013,23 @@
   }
 
   function setActiveTab(tabName) {
+    authTabsEl.classList.remove("hidden");
+    verifyForm.classList.add("hidden");
     authTabs.forEach((btn) => btn.classList.toggle("active", btn.dataset.tab === tabName));
     loginForm.classList.toggle("hidden", tabName !== "login");
     signupForm.classList.toggle("hidden", tabName !== "signup");
+  }
+
+  function showVerifyScreen(email) {
+    pendingVerifyEmail = email;
+    authTabsEl.classList.add("hidden");
+    loginForm.classList.add("hidden");
+    signupForm.classList.add("hidden");
+    verifyForm.classList.remove("hidden");
+    verifyDescEl.textContent = `${email} 로 받은 인증번호를 입력해주세요.`;
+    showMessage(verifyMessageEl, "", "");
+    verifyCodeInput.value = "";
+    setTimeout(() => verifyCodeInput.focus(), 50);
   }
 
   authTabs.forEach((btn) => {
@@ -1047,11 +1089,53 @@
         showMessage(signupMessageEl, data.error || "회원가입에 실패했습니다.", "error");
         return;
       }
-      showMessage(signupMessageEl, data.message, "success");
       signupForm.reset();
-      setTimeout(() => setActiveTab("login"), 1500);
+      if (data.needsVerification) {
+        showVerifyScreen(email);
+      } else {
+        showMessage(signupMessageEl, data.message, "success");
+        setTimeout(() => setActiveTab("login"), 1500);
+      }
     } catch (err) {
       showMessage(signupMessageEl, "네트워크 오류가 발생했습니다.", "error");
+    }
+  });
+
+  verifyForm.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    showMessage(verifyMessageEl, "", "");
+    const token = verifyCodeInput.value.trim();
+    if (!token) return;
+
+    try {
+      const res = await fetch("/api/auth/verify-signup", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: pendingVerifyEmail, token }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        showMessage(verifyMessageEl, data.error || "인증에 실패했습니다.", "error");
+        return;
+      }
+      await enterChatAuthenticated(data.username);
+    } catch (err) {
+      showMessage(verifyMessageEl, "네트워크 오류가 발생했습니다.", "error");
+    }
+  });
+
+  resendCodeBtn.addEventListener("click", async () => {
+    showMessage(verifyMessageEl, "", "");
+    try {
+      const res = await fetch("/api/auth/resend-code", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: pendingVerifyEmail }),
+      });
+      const data = await res.json();
+      showMessage(verifyMessageEl, data.message || data.error, res.ok ? "success" : "error");
+    } catch (err) {
+      showMessage(verifyMessageEl, "네트워크 오류가 발생했습니다.", "error");
     }
   });
 

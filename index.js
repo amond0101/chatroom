@@ -96,7 +96,7 @@ const presence = new Map();
 function roomPresenceList(roomId) {
   const members = presence.get(roomId);
   if (!members) return [];
-  return [...new Set(members.values())];
+  return [...members.values()];
 }
 
 function broadcastPresence(roomId) {

@@ -116,6 +116,59 @@
   .btn-pill:hover { background: #22e065; transform: scale(1.03); }
   .btn-pill:active { transform: scale(0.97); }
 
+  #auth-tabs {
+    display: flex;
+    gap: 4px;
+    background: var(--surface-2);
+    padding: 4px;
+    border-radius: 500px;
+    margin-bottom: 4px;
+  }
+  #auth-tabs .tab {
+    background: none;
+    border: none;
+    color: var(--text-muted);
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 1.2px;
+    text-transform: uppercase;
+    padding: 8px 20px;
+    border-radius: 500px;
+    cursor: pointer;
+    transition: background 0.15s ease, color 0.15s ease;
+  }
+  #auth-tabs .tab.active { background: var(--accent); color: #000; }
+  .auth-form {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 10px;
+    width: 100%;
+  }
+  .auth-message {
+    font-size: 12px;
+    min-height: 16px;
+    text-align: center;
+    max-width: 280px;
+  }
+  .auth-message.error { color: var(--negative); }
+  .auth-message.success { color: var(--accent); }
+  #logout-btn {
+    background: var(--surface-2);
+    color: var(--text-muted);
+    border: none;
+    padding: 6px 14px;
+    border-radius: 500px;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    cursor: pointer;
+    margin-left: 8px;
+    transition: background 0.15s ease, color 0.15s ease;
+  }
+  #logout-btn:hover { background: var(--negative); color: #000; }
+
   /* ---------- Layout ---------- */
   #chat-ui { display: none; width: 100%; height: 100%; }
   #chat-ui.active { display: flex; animation: fadeIn 0.3s ease both; }
@@ -564,8 +617,26 @@
 <div id="app">
   <div id="login">
     <h2><span class="accent-dot"></span>Chatroom</h2>
-    <input id="username-input" placeholder="닉네임을 입력하세요" maxlength="30" />
-    <button id="join-btn" class="btn-pill">입장하기</button>
+    <div id="auth-tabs">
+      <button type="button" class="tab active" data-tab="login">로그인</button>
+      <button type="button" class="tab" data-tab="signup">회원가입</button>
+    </div>
+
+    <form id="login-form" class="auth-form">
+      <input type="email" id="login-email" placeholder="이메일" autocomplete="email" />
+      <input type="password" id="login-password" placeholder="비밀번호" autocomplete="current-password" />
+      <button type="submit" class="btn-pill">로그인</button>
+      <div class="auth-message" id="login-message"></div>
+    </form>
+
+    <form id="signup-form" class="auth-form hidden">
+      <input id="signup-username" placeholder="닉네임" maxlength="30" autocomplete="nickname" />
+      <input type="email" id="signup-email" placeholder="이메일" autocomplete="email" />
+      <input type="password" id="signup-password" placeholder="비밀번호 (6자 이상)" autocomplete="new-password" />
+      <input type="password" id="signup-password-confirm" placeholder="비밀번호 확인" autocomplete="new-password" />
+      <button type="submit" class="btn-pill">회원가입</button>
+      <div class="auth-message" id="signup-message"></div>
+    </form>
   </div>
 
   <div id="chat-ui">
@@ -580,7 +651,10 @@
       <header>
         <button id="menu-btn" title="채팅방 목록">☰</button>
         <span class="room-title" id="room-title">일반</span>
-        <span id="presence-pill"><span class="dot"></span><span id="presence-count">0</span>명 접속 중</span>
+        <span style="display:flex; align-items:center;">
+          <span id="presence-pill"><span class="dot"></span><span id="presence-count">0</span>명 접속 중</span>
+          <button id="logout-btn">나가기</button>
+        </span>
       </header>
 
       <div id="messages"></div>
@@ -615,7 +689,7 @@
 
 <script src="/socket.io/socket.io.js"></script>
 <script>
-  const socket = io();
+  let socket = null;
   let username = "";
   let currentRoomId = null;
   let rooms = [];
@@ -625,8 +699,18 @@
 
   const loginEl = document.getElementById("login");
   const chatUiEl = document.getElementById("chat-ui");
-  const usernameInput = document.getElementById("username-input");
-  const joinBtn = document.getElementById("join-btn");
+  const authTabs = document.querySelectorAll("#auth-tabs .tab");
+  const loginForm = document.getElementById("login-form");
+  const signupForm = document.getElementById("signup-form");
+  const loginEmailInput = document.getElementById("login-email");
+  const loginPasswordInput = document.getElementById("login-password");
+  const loginMessageEl = document.getElementById("login-message");
+  const signupUsernameInput = document.getElementById("signup-username");
+  const signupEmailInput = document.getElementById("signup-email");
+  const signupPasswordInput = document.getElementById("signup-password");
+  const signupPasswordConfirmInput = document.getElementById("signup-password-confirm");
+  const signupMessageEl = document.getElementById("signup-message");
+  const logoutBtn = document.getElementById("logout-btn");
   const roomListEl = document.getElementById("room-list");
   const createRoomBtn = document.getElementById("create-room-btn");
   const roomTitleEl = document.getElementById("room-title");
@@ -856,24 +940,136 @@
     typingUsers.clear();
     updateTypingIndicator();
     renderRoomList();
-    socket.emit("join room", { roomId, username });
+    socket.emit("join room", { roomId });
     loadHistory(roomId);
   }
 
-  async function enterChat() {
-    const name = usernameInput.value.trim();
-    if (!name) return;
+  function connectSocket() {
+    if (socket) return;
+    socket = io();
+
+    socket.on("chat message", (msg) => renderMessage(msg));
+
+    socket.on("reactions update", ({ messageId, reactions }) => {
+      const wrapper = messagesEl.querySelector(`[data-message-id="${messageId}"]`);
+      if (!wrapper) return;
+      const row = wrapper.querySelector(".reactions-row");
+      renderReactions(row, messageId, reactions);
+    });
+
+    socket.on("system message", renderSystem);
+
+    socket.on("presence", (list) => {
+      presenceCountEl.textContent = list.length;
+    });
+
+    socket.on("typing", ({ username: who }) => {
+      if (who === username) return;
+      typingUsers.add(who);
+      updateTypingIndicator();
+    });
+
+    socket.on("stop typing", ({ username: who }) => {
+      typingUsers.delete(who);
+      updateTypingIndicator();
+    });
+  }
+
+  async function enterChatAuthenticated(name) {
     username = name;
     loginEl.classList.add("hidden");
     chatUiEl.classList.add("active");
+    connectSocket();
     await loadRooms();
     messageInput.focus();
   }
 
-  joinBtn.addEventListener("click", enterChat);
-  usernameInput.addEventListener("keydown", (e) => {
-    if (e.key === "Enter") enterChat();
+  function setActiveTab(tabName) {
+    authTabs.forEach((btn) => btn.classList.toggle("active", btn.dataset.tab === tabName));
+    loginForm.classList.toggle("hidden", tabName !== "login");
+    signupForm.classList.toggle("hidden", tabName !== "signup");
+  }
+
+  authTabs.forEach((btn) => {
+    btn.addEventListener("click", () => setActiveTab(btn.dataset.tab));
   });
+
+  function showMessage(el, text, type) {
+    el.textContent = text;
+    el.className = "auth-message" + (type ? ` ${type}` : "");
+  }
+
+  loginForm.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    showMessage(loginMessageEl, "", "");
+    const email = loginEmailInput.value.trim();
+    const password = loginPasswordInput.value;
+    if (!email || !password) return;
+
+    try {
+      const res = await fetch("/api/auth/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email, password }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        showMessage(loginMessageEl, data.error || "로그인에 실패했습니다.", "error");
+        return;
+      }
+      await enterChatAuthenticated(data.username);
+    } catch (err) {
+      showMessage(loginMessageEl, "네트워크 오류가 발생했습니다.", "error");
+    }
+  });
+
+  signupForm.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    showMessage(signupMessageEl, "", "");
+    const username_ = signupUsernameInput.value.trim();
+    const email = signupEmailInput.value.trim();
+    const password = signupPasswordInput.value;
+    const passwordConfirm = signupPasswordConfirmInput.value;
+
+    if (password !== passwordConfirm) {
+      showMessage(signupMessageEl, "비밀번호가 일치하지 않습니다.", "error");
+      return;
+    }
+
+    try {
+      const res = await fetch("/api/auth/signup", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ username: username_, email, password, passwordConfirm }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        showMessage(signupMessageEl, data.error || "회원가입에 실패했습니다.", "error");
+        return;
+      }
+      showMessage(signupMessageEl, data.message, "success");
+      signupForm.reset();
+      setTimeout(() => setActiveTab("login"), 1500);
+    } catch (err) {
+      showMessage(signupMessageEl, "네트워크 오류가 발생했습니다.", "error");
+    }
+  });
+
+  logoutBtn.addEventListener("click", async () => {
+    await fetch("/api/auth/logout", { method: "POST" });
+    location.reload();
+  });
+
+  (async function restoreSession() {
+    try {
+      const res = await fetch("/api/auth/me");
+      if (!res.ok) return;
+      const data = await res.json();
+      await enterChatAuthenticated(data.username);
+    } catch (err) {
+      // not logged in, stay on login screen
+    }
+  })();
 
   createRoomBtn.addEventListener("click", openRoomModal);
 
@@ -938,33 +1134,6 @@
     }
   });
 
-  socket.on("chat message", (msg) => {
-    renderMessage(msg);
-  });
-
-  socket.on("reactions update", ({ messageId, reactions }) => {
-    const wrapper = messagesEl.querySelector(`[data-message-id="${messageId}"]`);
-    if (!wrapper) return;
-    const row = wrapper.querySelector(".reactions-row");
-    renderReactions(row, messageId, reactions);
-  });
-
-  socket.on("system message", renderSystem);
-
-  socket.on("presence", (list) => {
-    presenceCountEl.textContent = list.length;
-  });
-
-  socket.on("typing", ({ username: who }) => {
-    if (who === username) return;
-    typingUsers.add(who);
-    updateTypingIndicator();
-  });
-
-  socket.on("stop typing", ({ username: who }) => {
-    typingUsers.delete(who);
-    updateTypingIndicator();
-  });
 </script>
 </body>
 </html>
